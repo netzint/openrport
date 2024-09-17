@@ -1,0 +1,119 @@
+
+name: Netzint Build Client and Server
+
+on:
+  push:
+    tags:
+      - '*.*.*'
+  workflow_dispatch:
+
+jobs:
+  build-client:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        goos: [linux, darwin, freebsd]
+        goarch: [amd64, arm64]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Build client
+      run: |
+        GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ./build/rport_${{ matrix.goos }}_${{ matrix.goarch }} ./cmd/rport
+
+    - name: Upload client binaries
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-files
+        path: build/rport_${{ matrix.goos }}_${{ matrix.goarch }}
+
+  build-client-windows:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        goos: [windows]
+        goarch: [amd64]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'
+
+    - name: Build client
+      run: |
+        GOOS=${{ matrix.goos }} GOARCH=${{ matrix.goarch }} go build -o ./build/rport_${{ matrix.goos }}_${{ matrix.goarch }}.exe ./cmd/rport
+
+    - name: Upload client binaries
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-files
+        path: build/rport_${{ matrix.goos }}_${{ matrix.goarch }}.exe
+
+  build-server:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        goos: [linux]
+        goarch: [amd64, arm64]
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v3
+
+    - name: Set up Go
+      uses: actions/setup-go@v4
+      with:
+        go-version: '1.20'      
+
+    - name: Build server for Ubuntu
+      run: |
+        GOOS=linux GOARCH=amd64 go build -o ./build/rportd_${{ matrix.goos }}_${{ matrix.goarch }} ./cmd/rportd
+
+    - name: Upload server binary
+      uses: actions/upload-artifact@v3
+      with:
+        name: build-files
+        path: build/rportd_${{ matrix.goos }}_${{ matrix.goarch }}
+
+  release:
+    needs: [build-client, build-client-windows, build-server]
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download Artifacts
+      uses: actions/download-artifact@v3
+      with:
+        name: build-files
+
+    - name: Create Release
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ github.ref }}
+        release_name: Release ${{ github.ref }}
+        draft: false
+        prerelease: false
+          
+    - name: Upload Release Assets
+      id: upload-release-assets
+      uses: dwenegar/upload-release-assets@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        release_id: ${{ steps.create_release.outputs.id }}
+        assets_path: .

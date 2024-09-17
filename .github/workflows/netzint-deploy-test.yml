@@ -1,0 +1,78 @@
+name: Netzint deploy on test server
+
+on:
+  push:
+    branches:
+      - master
+
+jobs:
+  deploy-to-test-server:
+    name: Deploy to test server
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - name: Set up Go
+        uses: actions/setup-go@v2
+        with:
+          go-version: '1.20'
+
+      - name: Build rport for linux
+        run: go build -v -ldflags="-X 'github.com/openrport/openrport/share.BuildVersion=$(date -u +%y.%m%d.%H%M)-$(git rev-parse HEAD)'"  -o ./ ./cmd/rport
+
+      - name: Build rport for windows
+        run: GOOS=windows GOARCH=amd64 go build -v -ldflags="-X 'github.com/openrport/openrport/share.BuildVersion=$(date -u +%y.%m%d.%H%M)-$(git rev-parse HEAD)'"  -o ./rport.exe ./cmd/rport
+
+      - name: Build rport server
+        run: go build -v -ldflags="-X 'github.com/openrport/openrport/share.BuildVersion=$(date -u +%y.%m%d.%H%M)-$(git rev-parse HEAD)'"  -o ./ ./cmd/rportd
+
+      - name: Test Build
+        shell: bash
+        run: |
+          bash .github/scripts/start_rportd.sh
+          bash .github/scripts/start_rport.sh
+      
+      - name: Copy a new version to remote server
+        shell: bash
+        env:
+          SSH_TEST_SERVER_LINUX: ${{ secrets.SSH_TEST_SERVER_LINUX }}
+          SSH_TEST_CLIENT_LINUX: ${{ secrets.SSH_TEST_CLIENT_LINUX }}
+          SSH_TEST_CLIENT_WINDOWS: ${{ secrets.SSH_TEST_CLIENT_WINDOWS }}
+          SSH_PRIV_KEY: ${{ secrets.SSH_PRIV_KEY }}
+        run: |
+          test -e ~/.ssh || mkdir ~/.ssh 
+          echo "${SSH_PRIV_KEY}" > ~/.ssh/id_ed25519
+          chmod 0400 ~/.ssh/*
+          ls -lah ~/.ssh/
+          scp -o StrictHostKeyChecking=no rportd root@${SSH_TEST_SERVER_LINUX}:/tmp/.rportd
+          echo "✅ Copied rportd to destination"
+          ssh -o StrictHostKeyChecking=no root@${SSH_TEST_SERVER_LINUX} bash << EOF
+          set -e
+          sudo -n service rportd stop
+          sudo -n mv /tmp/.rportd /usr/local/bin/rportd
+          sudo -n setcap 'cap_net_bind_service=+ep' /usr/local/bin/rportd
+          sudo -n service rportd start
+          /usr/local/bin/rportd --version
+          EOF
+          echo "✅ Rportd restarted on remote host"
+          scp -o StrictHostKeyChecking=no rport root@${SSH_TEST_CLIENT_LINUX}:/tmp/.rport
+          echo "✅ Copied rport to destination"
+          ssh -o StrictHostKeyChecking=no root@${SSH_TEST_CLIENT_LINUX} bash << EOF
+          set -e
+          sudo -n service rport stop
+          sudo -n mv /tmp/.rport /usr/local/bin/rport
+          sudo -n service rport start
+          /usr/local/bin/rport --version
+          EOF
+          echo "✅ Rport restarted on remote host"
+          scp -o StrictHostKeyChecking=no rport.exe admin@${SSH_TEST_CLIENT_WINDOWS}:C:/Users/admin/rport.exe
+          echo "✅ Copied rport to destination"
+          ssh -o StrictHostKeyChecking=no admin@${SSH_TEST_CLIENT_WINDOWS} cmd << EOF
+          @echo off
+          net stop rport
+          move /Y C:\Users\admin\rport.exe "C:\Program Files\RPort\rport.exe"
+          net start rport
+          "C:\Program Files\RPort\rport.exe" --version
+          EOF
+          echo "✅ Rport restarted on remote host"
