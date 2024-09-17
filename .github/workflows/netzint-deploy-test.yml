@@ -3,7 +3,7 @@ name: Netzint deploy on test server
 on:
   push:
     branches:
-      - master
+      - development
 
 jobs:
   deploy-to-test-server:
